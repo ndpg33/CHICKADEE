@@ -2,45 +2,170 @@
 
 #include "ChickadeeConfig.h"
 #include "Display.h"
+#include "Menu.h"
 #include "Radio.h"
 
 namespace {
 
-bool lastUpState = HIGH;
-bool lastDownState = HIGH;
-bool lastSelectState = HIGH;
-bool lastBackState = HIGH;
+enum class AppScreen : uint8_t {
+  MainMenu,
+  FeaturePage
+};
+
+struct Button {
+  uint8_t pin;
+  bool stableState;
+  bool previousReading;
+  unsigned long lastChangeTime;
+};
 
 constexpr unsigned long DEBOUNCE_MS = 25;
 
-void checkButton(
-    uint8_t pin,
-    bool& previousState,
-    const char* buttonName
-) {
-  bool currentState = digitalRead(pin);
+Button upButton = {
+    Chickadee::BTN_UP,
+    HIGH,
+    HIGH,
+    0
+};
 
-  if (currentState == previousState) {
-    return;
+Button downButton = {
+    Chickadee::BTN_DOWN,
+    HIGH,
+    HIGH,
+    0
+};
+
+Button selectButton = {
+    Chickadee::BTN_SELECT,
+    HIGH,
+    HIGH,
+    0
+};
+
+Button backButton = {
+    Chickadee::BTN_BACK,
+    HIGH,
+    HIGH,
+    0
+};
+
+AppScreen currentScreen = AppScreen::MainMenu;
+bool oledReady = false;
+bool radioReady = false;
+
+/*
+ * Returns true once when a button becomes pressed.
+ * Releasing the button does not produce an event.
+ */
+bool buttonPressed(Button& button) {
+  const bool currentReading =
+      digitalRead(button.pin);
+
+  if (currentReading != button.previousReading) {
+    button.lastChangeTime = millis();
+    button.previousReading = currentReading;
   }
 
-  delay(DEBOUNCE_MS);
-  currentState = digitalRead(pin);
-
-  if (currentState == previousState) {
-    return;
+  if (
+      millis() - button.lastChangeTime
+      < DEBOUNCE_MS
+  ) {
+    return false;
   }
 
-  previousState = currentState;
-  const bool pressed = currentState == LOW;
+  if (currentReading == button.stableState) {
+    return false;
+  }
 
-  Serial.print(buttonName);
-  Serial.println(pressed ? " PRESSED" : " RELEASED");
+  button.stableState = currentReading;
 
-  ChickadeeDisplay::showButtonEvent(
-      buttonName,
-      pressed
+  return button.stableState == LOW;
+}
+
+void initializeButton(Button& button) {
+  pinMode(button.pin, INPUT_PULLUP);
+
+  const bool initialState =
+      digitalRead(button.pin);
+
+  button.stableState = initialState;
+  button.previousReading = initialState;
+  button.lastChangeTime = millis();
+}
+
+void drawMainMenu() {
+  currentScreen = AppScreen::MainMenu;
+
+  ChickadeeDisplay::showMainMenu(
+      ChickadeeMenu::getSelectedIndex()
   );
+}
+
+void openSelectedFeature() {
+  const ChickadeeMenu::Item selectedItem =
+      ChickadeeMenu::getSelectedItem();
+
+  const char* featureName =
+      ChickadeeMenu::getItemLabel(selectedItem);
+
+  Serial.print("Opening: ");
+  Serial.println(featureName);
+
+  currentScreen = AppScreen::FeaturePage;
+
+  ChickadeeDisplay::showComingSoon(
+      featureName
+  );
+}
+
+void handleMainMenu() {
+  if (buttonPressed(upButton)) {
+    ChickadeeMenu::moveUp();
+
+    Serial.print("Selected: ");
+    Serial.println(
+        ChickadeeMenu::getItemLabel(
+            ChickadeeMenu::getSelectedItem()
+        )
+    );
+
+    drawMainMenu();
+  }
+
+  if (buttonPressed(downButton)) {
+    ChickadeeMenu::moveDown();
+
+    Serial.print("Selected: ");
+    Serial.println(
+        ChickadeeMenu::getItemLabel(
+            ChickadeeMenu::getSelectedItem()
+        )
+    );
+
+    drawMainMenu();
+  }
+
+  if (buttonPressed(selectButton)) {
+    openSelectedFeature();
+  }
+
+  // Consume BACK presses while already on the menu.
+  buttonPressed(backButton);
+}
+
+void handleFeaturePage() {
+  /*
+   * Consume events from buttons that currently
+   * have no function on placeholder pages.
+   */
+  buttonPressed(upButton);
+  buttonPressed(downButton);
+  buttonPressed(selectButton);
+
+  if (buttonPressed(backButton)) {
+    Serial.println("Returning to main menu.");
+    drawMainMenu();
+  }
 }
 
 }  // namespace
@@ -49,10 +174,10 @@ void setup() {
   Serial.begin(115200);
   delay(500);
 
-  pinMode(Chickadee::BTN_UP, INPUT_PULLUP);
-  pinMode(Chickadee::BTN_DOWN, INPUT_PULLUP);
-  pinMode(Chickadee::BTN_SELECT, INPUT_PULLUP);
-  pinMode(Chickadee::BTN_BACK, INPUT_PULLUP);
+  initializeButton(upButton);
+  initializeButton(downButton);
+  initializeButton(selectButton);
+  initializeButton(backButton);
 
   Serial.println();
   Serial.println("============================");
@@ -61,29 +186,45 @@ void setup() {
   Serial.println(Chickadee::VERSION);
   Serial.println("============================");
 
-  const bool oledReady = ChickadeeDisplay::begin();
+  oledReady = ChickadeeDisplay::begin();
 
   if (!oledReady) {
-    Serial.println("OLED initialization FAILED.");
+    Serial.println(
+        "OLED initialization FAILED."
+    );
   } else {
-    Serial.println("OLED initialization successful.");
+    Serial.println(
+        "OLED initialization successful."
+    );
+
     ChickadeeDisplay::showBootScreen();
   }
 
-  delay(1200);
+  delay(1000);
 
   Serial.println("Initializing CC1101...");
-  const bool radioReady = ChickadeeRadio::begin();
+
+  radioReady = ChickadeeRadio::begin();
 
   if (radioReady) {
-    Serial.println("CC1101 initialization successful.");
+    Serial.println(
+        "CC1101 initialization successful."
+    );
 
     Serial.print("Listening at ");
-    Serial.print(ChickadeeRadio::getFrequency(), 3);
+    Serial.print(
+        ChickadeeRadio::getFrequency(),
+        3
+    );
     Serial.println(" MHz");
   } else {
-    Serial.print("CC1101 initialization FAILED. Error: ");
-    Serial.println(ChickadeeRadio::getLastError());
+    Serial.print(
+        "CC1101 initialization FAILED. Error: "
+    );
+
+    Serial.println(
+        ChickadeeRadio::getLastError()
+    );
   }
 
   if (oledReady) {
@@ -91,36 +232,29 @@ void setup() {
         oledReady,
         radioReady
     );
+
+    delay(1500);
+
+    ChickadeeMenu::begin();
+    drawMainMenu();
   }
 
-  lastUpState = digitalRead(Chickadee::BTN_UP);
-  lastDownState = digitalRead(Chickadee::BTN_DOWN);
-  lastSelectState = digitalRead(Chickadee::BTN_SELECT);
-  lastBackState = digitalRead(Chickadee::BTN_BACK);
+  Serial.println("Chickadee ready.");
 }
 
 void loop() {
-  checkButton(
-      Chickadee::BTN_UP,
-      lastUpState,
-      "UP"
-  );
+  if (!oledReady) {
+    delay(100);
+    return;
+  }
 
-  checkButton(
-      Chickadee::BTN_DOWN,
-      lastDownState,
-      "DOWN"
-  );
+  switch (currentScreen) {
+    case AppScreen::MainMenu:
+      handleMainMenu();
+      break;
 
-  checkButton(
-      Chickadee::BTN_SELECT,
-      lastSelectState,
-      "SELECT"
-  );
-
-  checkButton(
-      Chickadee::BTN_BACK,
-      lastBackState,
-      "BACK"
-  );
+    case AppScreen::FeaturePage:
+      handleFeaturePage();
+      break;
+  }
 }

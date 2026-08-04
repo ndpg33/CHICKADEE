@@ -6,6 +6,7 @@
 #include <Wire.h>
 
 #include "ChickadeeConfig.h"
+#include "Menu.h"
 
 namespace {
 
@@ -16,10 +17,11 @@ Adafruit_SSD1306 display(
     -1
 );
 
-void prepareText(uint8_t size = 1) {
+void prepareText(uint8_t textSize = 1) {
   display.clearDisplay();
   display.setTextColor(SSD1306_WHITE);
-  display.setTextSize(size);
+  display.setTextSize(textSize);
+  display.setTextWrap(false);
   display.setCursor(0, 0);
 }
 
@@ -54,7 +56,10 @@ void showBootScreen() {
   display.display();
 }
 
-void showHardwareStatus(bool oledReady, bool radioReady) {
+void showHardwareStatus(
+    bool oledReady,
+    bool radioReady
+) {
   prepareText(1);
 
   display.println("CHICKADEE STATUS");
@@ -64,22 +69,66 @@ void showHardwareStatus(bool oledReady, bool radioReady) {
   display.println(oledReady ? "OK" : "FAILED");
 
   display.print("CC1101:  ");
-  display.println(radioReady ? "OK" : "NOT TESTED");
+  display.println(radioReady ? "OK" : "FAILED");
 
   display.println();
-  display.println("Buttons ready");
+  display.println("Buttons: READY");
 
   display.display();
 }
 
-void showButtonEvent(const char* buttonName, bool pressed) {
-  prepareText(2);
+void showMainMenu(uint8_t selectedIndex) {
+  prepareText(1);
 
-  display.println(buttonName);
+  display.println("CHICKADEE");
+  display.drawFastHLine(
+      0,
+      10,
+      Chickadee::OLED_WIDTH,
+      SSD1306_WHITE
+  );
 
-  display.setTextSize(1);
-  display.println();
-  display.println(pressed ? "PRESSED" : "RELEASED");
+  for (uint8_t index = 0;
+       index < ChickadeeMenu::ITEM_COUNT;
+       index++) {
+
+    const int16_t yPosition = 16 + (index * 12);
+
+    display.setCursor(0, yPosition);
+
+    if (index == selectedIndex) {
+      display.print("> ");
+    } else {
+      display.print("  ");
+    }
+
+    const auto item =
+        static_cast<ChickadeeMenu::Item>(index);
+
+    display.print(
+        ChickadeeMenu::getItemLabel(item)
+    );
+  }
+
+  display.display();
+}
+
+void showComingSoon(const char* title) {
+  prepareText(1);
+
+  display.println(title);
+  display.drawFastHLine(
+      0,
+      10,
+      Chickadee::OLED_WIDTH,
+      SSD1306_WHITE
+  );
+
+  display.setCursor(0, 24);
+  display.println("Coming soon");
+
+  display.setCursor(0, 48);
+  display.println("BACK: Main menu");
 
   display.display();
 }
