@@ -133,4 +133,75 @@ void showComingSoon(const char* title) {
   display.display();
 }
 
+void showLiveRSSI(
+    float frequencyMHz,
+    float rssi
+) {
+  prepareText(1);
+
+  // Header
+  display.println("LIVE RSSI");
+
+  display.drawFastHLine(
+      0,
+      10,
+      Chickadee::OLED_WIDTH,
+      SSD1306_WHITE
+  );
+
+  // Frequency
+  display.setCursor(0, 14);
+  display.print(frequencyMHz, 3);
+  display.println(" MHz");
+
+  // RSSI value
+  display.setTextSize(2);
+  display.setCursor(0, 25);
+  display.print(rssi, 1);
+
+  display.setTextSize(1);
+  display.print(" dBm");
+
+  // Signal-strength bar
+  int barWidth = static_cast<int>(
+      map(
+          static_cast<long>(rssi),
+          -110,
+          -30,
+          0,
+          118
+      )
+  );
+
+  barWidth = constrain(
+      barWidth,
+      0,
+      118
+  );
+
+  display.drawRect(
+      3,
+      45,
+      122,
+      9,
+      SSD1306_WHITE
+  );
+
+  if (barWidth > 0) {
+    display.fillRect(
+        5,
+        47,
+        barWidth,
+        5,
+        SSD1306_WHITE
+    );
+  }
+
+  // Footer fits within pixels 55–63
+  display.setCursor(0, 56);
+  display.print("UP/DN:TUNE  BACK:EXIT");
+
+  display.display();
+}
+
 }  // namespace ChickadeeDisplay

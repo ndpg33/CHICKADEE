@@ -9,7 +9,8 @@ namespace {
 
 enum class AppScreen : uint8_t {
   MainMenu,
-  FeaturePage
+  LiveRSSI,
+  Placeholder
 };
 
 struct Button {
@@ -20,6 +21,11 @@ struct Button {
 };
 
 constexpr unsigned long DEBOUNCE_MS = 25;
+constexpr unsigned long RSSI_UPDATE_MS = 100;
+
+constexpr float FREQUENCY_STEP_MHZ = 0.05f;
+constexpr float MIN_FREQUENCY_MHZ = 387.0f;
+constexpr float MAX_FREQUENCY_MHZ = 464.0f;
 
 Button upButton = {
     Chickadee::BTN_UP,
@@ -49,21 +55,25 @@ Button backButton = {
     0
 };
 
-AppScreen currentScreen = AppScreen::MainMenu;
+AppScreen currentScreen =
+    AppScreen::MainMenu;
+
 bool oledReady = false;
 bool radioReady = false;
 
-/*
- * Returns true once when a button becomes pressed.
- * Releasing the button does not produce an event.
- */
+unsigned long lastRSSIUpdate = 0;
+
 bool buttonPressed(Button& button) {
   const bool currentReading =
       digitalRead(button.pin);
 
-  if (currentReading != button.previousReading) {
+  if (
+      currentReading
+      != button.previousReading
+  ) {
     button.lastChangeTime = millis();
-    button.previousReading = currentReading;
+    button.previousReading =
+        currentReading;
   }
 
   if (
@@ -73,48 +83,129 @@ bool buttonPressed(Button& button) {
     return false;
   }
 
-  if (currentReading == button.stableState) {
+  if (
+      currentReading
+      == button.stableState
+  ) {
     return false;
   }
 
-  button.stableState = currentReading;
+  button.stableState =
+      currentReading;
 
   return button.stableState == LOW;
 }
 
 void initializeButton(Button& button) {
-  pinMode(button.pin, INPUT_PULLUP);
+  pinMode(
+      button.pin,
+      INPUT_PULLUP
+  );
 
   const bool initialState =
       digitalRead(button.pin);
 
-  button.stableState = initialState;
-  button.previousReading = initialState;
-  button.lastChangeTime = millis();
+  button.stableState =
+      initialState;
+
+  button.previousReading =
+      initialState;
+
+  button.lastChangeTime =
+      millis();
 }
 
 void drawMainMenu() {
-  currentScreen = AppScreen::MainMenu;
+  ChickadeeRadio::stopLiveRSSI();
+
+  currentScreen =
+      AppScreen::MainMenu;
 
   ChickadeeDisplay::showMainMenu(
       ChickadeeMenu::getSelectedIndex()
   );
 }
 
+void drawLiveRSSI() {
+  const float rssi =
+      ChickadeeRadio::readRSSI();
+
+  ChickadeeDisplay::showLiveRSSI(
+      ChickadeeRadio::getFrequency(),
+      rssi
+  );
+
+  Serial.print("Frequency: ");
+  Serial.print(
+      ChickadeeRadio::getFrequency(),
+      3
+  );
+  Serial.print(" MHz, RSSI: ");
+  Serial.print(rssi, 1);
+  Serial.println(" dBm");
+}
+
+void openLiveRSSI() {
+  Serial.println(
+      "Opening Live RSSI."
+  );
+
+  if (!radioReady) {
+    currentScreen =
+        AppScreen::Placeholder;
+
+    ChickadeeDisplay::showComingSoon(
+        "RADIO ERROR"
+    );
+
+    return;
+  }
+
+  if (!ChickadeeRadio::startLiveRSSI()) {
+    Serial.print(
+        "Could not start live RSSI. Error: "
+    );
+
+    Serial.println(
+        ChickadeeRadio::getLastError()
+    );
+
+    currentScreen =
+        AppScreen::Placeholder;
+
+    ChickadeeDisplay::showComingSoon(
+        "RSSI ERROR"
+    );
+
+    return;
+  }
+
+  currentScreen =
+      AppScreen::LiveRSSI;
+
+  lastRSSIUpdate = 0;
+  drawLiveRSSI();
+}
+
 void openSelectedFeature() {
-  const ChickadeeMenu::Item selectedItem =
+  const ChickadeeMenu::Item selected =
       ChickadeeMenu::getSelectedItem();
 
-  const char* featureName =
-      ChickadeeMenu::getItemLabel(selectedItem);
+  if (
+      selected
+      == ChickadeeMenu::Item::LiveRSSI
+  ) {
+    openLiveRSSI();
+    return;
+  }
 
-  Serial.print("Opening: ");
-  Serial.println(featureName);
-
-  currentScreen = AppScreen::FeaturePage;
+  currentScreen =
+      AppScreen::Placeholder;
 
   ChickadeeDisplay::showComingSoon(
-      featureName
+      ChickadeeMenu::getItemLabel(
+          selected
+      )
   );
 }
 
@@ -122,48 +213,85 @@ void handleMainMenu() {
   if (buttonPressed(upButton)) {
     ChickadeeMenu::moveUp();
 
-    Serial.print("Selected: ");
-    Serial.println(
-        ChickadeeMenu::getItemLabel(
-            ChickadeeMenu::getSelectedItem()
-        )
+    ChickadeeDisplay::showMainMenu(
+        ChickadeeMenu::getSelectedIndex()
     );
-
-    drawMainMenu();
   }
 
   if (buttonPressed(downButton)) {
     ChickadeeMenu::moveDown();
 
-    Serial.print("Selected: ");
-    Serial.println(
-        ChickadeeMenu::getItemLabel(
-            ChickadeeMenu::getSelectedItem()
-        )
+    ChickadeeDisplay::showMainMenu(
+        ChickadeeMenu::getSelectedIndex()
     );
-
-    drawMainMenu();
   }
 
   if (buttonPressed(selectButton)) {
     openSelectedFeature();
   }
 
-  // Consume BACK presses while already on the menu.
   buttonPressed(backButton);
 }
 
-void handleFeaturePage() {
-  /*
-   * Consume events from buttons that currently
-   * have no function on placeholder pages.
-   */
+void handleLiveRSSI() {
+  if (buttonPressed(upButton)) {
+    float frequency =
+        ChickadeeRadio::getFrequency()
+        + FREQUENCY_STEP_MHZ;
+
+    if (frequency > MAX_FREQUENCY_MHZ) {
+      frequency = MIN_FREQUENCY_MHZ;
+    }
+
+    ChickadeeRadio::setFrequency(
+        frequency
+    );
+
+    drawLiveRSSI();
+  }
+
+  if (buttonPressed(downButton)) {
+    float frequency =
+        ChickadeeRadio::getFrequency()
+        - FREQUENCY_STEP_MHZ;
+
+    if (frequency < MIN_FREQUENCY_MHZ) {
+      frequency = MAX_FREQUENCY_MHZ;
+    }
+
+    ChickadeeRadio::setFrequency(
+        frequency
+    );
+
+    drawLiveRSSI();
+  }
+
+  buttonPressed(selectButton);
+
+  if (buttonPressed(backButton)) {
+    Serial.println(
+        "Leaving Live RSSI."
+    );
+
+    drawMainMenu();
+    return;
+  }
+
+  if (
+      millis() - lastRSSIUpdate
+      >= RSSI_UPDATE_MS
+  ) {
+    lastRSSIUpdate = millis();
+    drawLiveRSSI();
+  }
+}
+
+void handlePlaceholder() {
   buttonPressed(upButton);
   buttonPressed(downButton);
   buttonPressed(selectButton);
 
   if (buttonPressed(backButton)) {
-    Serial.println("Returning to main menu.");
     drawMainMenu();
   }
 }
@@ -186,40 +314,37 @@ void setup() {
   Serial.println(Chickadee::VERSION);
   Serial.println("============================");
 
-  oledReady = ChickadeeDisplay::begin();
+  oledReady =
+      ChickadeeDisplay::begin();
 
-  if (!oledReady) {
-    Serial.println(
-        "OLED initialization FAILED."
-    );
-  } else {
+  if (oledReady) {
     Serial.println(
         "OLED initialization successful."
     );
 
     ChickadeeDisplay::showBootScreen();
+  } else {
+    Serial.println(
+        "OLED initialization FAILED."
+    );
   }
 
   delay(1000);
 
-  Serial.println("Initializing CC1101...");
+  Serial.println(
+      "Initializing CC1101..."
+  );
 
-  radioReady = ChickadeeRadio::begin();
+  radioReady =
+      ChickadeeRadio::begin();
 
   if (radioReady) {
     Serial.println(
         "CC1101 initialization successful."
     );
-
-    Serial.print("Listening at ");
-    Serial.print(
-        ChickadeeRadio::getFrequency(),
-        3
-    );
-    Serial.println(" MHz");
   } else {
     Serial.print(
-        "CC1101 initialization FAILED. Error: "
+        "CC1101 initialization FAILED: "
     );
 
     Serial.println(
@@ -253,8 +378,12 @@ void loop() {
       handleMainMenu();
       break;
 
-    case AppScreen::FeaturePage:
-      handleFeaturePage();
+    case AppScreen::LiveRSSI:
+      handleLiveRSSI();
+      break;
+
+    case AppScreen::Placeholder:
+      handlePlaceholder();
       break;
   }
 }

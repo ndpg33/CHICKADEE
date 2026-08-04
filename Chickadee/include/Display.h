@@ -20,6 +20,11 @@ void showComingSoon(
     const char* title
 );
 
+void showLiveRSSI(
+    float frequencyMHz,
+    float rssi
+);
+
 }  // namespace ChickadeeDisplay
 
 #endif

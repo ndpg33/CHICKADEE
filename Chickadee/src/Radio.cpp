@@ -8,7 +8,6 @@
 
 namespace {
 
-// Starting frequency for initialization.
 constexpr float DEFAULT_FREQUENCY_MHZ = 433.92;
 
 // Module(CS, GDO0, RESET, GDO2)
@@ -20,8 +19,12 @@ CC1101 radio = new Module(
 );
 
 bool radioReady = false;
+bool liveRSSIMode = false;
+
 int lastError = RADIOLIB_ERR_NONE;
-float currentFrequencyMHz = DEFAULT_FREQUENCY_MHZ;
+
+float currentFrequencyMHz =
+    DEFAULT_FREQUENCY_MHZ;
 
 }  // namespace
 
@@ -40,18 +43,24 @@ bool begin() {
       4.8,    // Bitrate in kbps
       5.0,    // Frequency deviation in kHz
       203.0,  // Receiver bandwidth in kHz
-      10,     // Transmit power in dBm
+      10,     // TX power in dBm
       16      // Preamble length in bits
   );
 
-  radioReady = lastError == RADIOLIB_ERR_NONE;
+  radioReady =
+      lastError == RADIOLIB_ERR_NONE;
 
   if (!radioReady) {
     return false;
   }
 
+  currentFrequencyMHz =
+      DEFAULT_FREQUENCY_MHZ;
+
   lastError = radio.startReceive();
-  radioReady = lastError == RADIOLIB_ERR_NONE;
+
+  radioReady =
+      lastError == RADIOLIB_ERR_NONE;
 
   return radioReady;
 }
@@ -66,6 +75,70 @@ int getLastError() {
 
 float getFrequency() {
   return currentFrequencyMHz;
+}
+
+bool setFrequency(float frequencyMHz) {
+  if (!radioReady) {
+    return false;
+  }
+
+  lastError =
+      radio.setFrequency(frequencyMHz);
+
+  if (lastError != RADIOLIB_ERR_NONE) {
+    return false;
+  }
+
+  currentFrequencyMHz = frequencyMHz;
+
+  /*
+   * Retuning may disturb the current receive state,
+   * so restart the appropriate receive mode.
+   */
+  if (liveRSSIMode) {
+    lastError =
+        radio.receiveDirectAsync();
+  } else {
+    lastError =
+        radio.startReceive();
+  }
+
+  return lastError == RADIOLIB_ERR_NONE;
+}
+
+bool startLiveRSSI() {
+  if (!radioReady) {
+    return false;
+  }
+
+  lastError =
+      radio.receiveDirectAsync();
+
+  liveRSSIMode =
+      lastError == RADIOLIB_ERR_NONE;
+
+  return liveRSSIMode;
+}
+
+void stopLiveRSSI() {
+  if (!radioReady) {
+    return;
+  }
+
+  liveRSSIMode = false;
+
+  radio.standby();
+
+  lastError =
+      radio.startReceive();
+}
+
+float readRSSI() {
+  if (!radioReady || !liveRSSIMode) {
+    return -120.0f;
+  }
+
+  return radio.getRSSI();
 }
 
 }  // namespace ChickadeeRadio
