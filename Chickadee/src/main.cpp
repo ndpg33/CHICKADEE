@@ -2,6 +2,7 @@
 
 #include "ChickadeeConfig.h"
 #include "Display.h"
+#include "Radio.h"
 
 namespace {
 
@@ -31,7 +32,7 @@ void checkButton(
   }
 
   previousState = currentState;
-  bool pressed = currentState == LOW;
+  const bool pressed = currentState == LOW;
 
   Serial.print(buttonName);
   Serial.println(pressed ? " PRESSED" : " RELEASED");
@@ -60,19 +61,35 @@ void setup() {
   Serial.println(Chickadee::VERSION);
   Serial.println("============================");
 
-  bool oledReady = ChickadeeDisplay::begin();
+  const bool oledReady = ChickadeeDisplay::begin();
 
   if (!oledReady) {
     Serial.println("OLED initialization FAILED.");
   } else {
     Serial.println("OLED initialization successful.");
-
     ChickadeeDisplay::showBootScreen();
-    delay(1500);
+  }
 
+  delay(1200);
+
+  Serial.println("Initializing CC1101...");
+  const bool radioReady = ChickadeeRadio::begin();
+
+  if (radioReady) {
+    Serial.println("CC1101 initialization successful.");
+
+    Serial.print("Listening at ");
+    Serial.print(ChickadeeRadio::getFrequency(), 3);
+    Serial.println(" MHz");
+  } else {
+    Serial.print("CC1101 initialization FAILED. Error: ");
+    Serial.println(ChickadeeRadio::getLastError());
+  }
+
+  if (oledReady) {
     ChickadeeDisplay::showHardwareStatus(
-        true,
-        false
+        oledReady,
+        radioReady
     );
   }
 
