@@ -1,2 +1,2 @@
 # CHICKADEE
-The black-capped chickadee is also known for its calls and communication
+ESP32 and CC1101 portable sub-GHz RF analysis tool with OLED interface.
