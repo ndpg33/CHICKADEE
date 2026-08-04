@@ -204,4 +204,147 @@ void showLiveRSSI(
   display.display();
 }
 
+void showSpectrum(
+    float startMHz,
+    float endMHz,
+    const float* liveTrace,
+    const float* peakTrace,
+    uint8_t pointCount,
+    float peakFrequency,
+    float peakRSSI
+) {
+  prepareText(1);
+
+  constexpr int16_t GRAPH_LEFT = 18;
+  constexpr int16_t GRAPH_RIGHT = 127;
+
+  constexpr int16_t GRAPH_TOP = 12;
+  constexpr int16_t GRAPH_BOTTOM = 47;
+
+  constexpr float RSSI_TOP = -30.0f;
+  constexpr float RSSI_BOTTOM = -110.0f;
+
+  display.setCursor(0, 0);
+  display.print(startMHz, 1);
+  display.print("-");
+  display.print(endMHz, 1);
+  display.print(" MHz");
+
+  // Y-axis labels
+  display.setCursor(0, GRAPH_TOP);
+  display.print("-30");
+
+  display.setCursor(0, GRAPH_BOTTOM - 6);
+  display.print("-110");
+
+  // Axes
+  display.drawFastVLine(
+      GRAPH_LEFT,
+      GRAPH_TOP,
+      GRAPH_BOTTOM - GRAPH_TOP + 1,
+      SSD1306_WHITE
+  );
+
+  display.drawFastHLine(
+      GRAPH_LEFT,
+      GRAPH_BOTTOM,
+      GRAPH_RIGHT - GRAPH_LEFT + 1,
+      SSD1306_WHITE
+  );
+
+  int16_t previousX = GRAPH_LEFT;
+  int16_t previousY = GRAPH_BOTTOM;
+
+  for (
+      uint8_t i = 0;
+      i < pointCount;
+      i++
+  ) {
+    const int16_t x = map(
+        i,
+        0,
+        pointCount - 1,
+        GRAPH_LEFT + 1,
+        GRAPH_RIGHT
+    );
+
+    float liveValue = constrain(
+        liveTrace[i],
+        RSSI_BOTTOM,
+        RSSI_TOP
+    );
+
+    const int16_t liveY = map(
+        static_cast<long>(
+            liveValue * 10.0f
+        ),
+        static_cast<long>(
+            RSSI_BOTTOM * 10.0f
+        ),
+        static_cast<long>(
+            RSSI_TOP * 10.0f
+        ),
+        GRAPH_BOTTOM - 1,
+        GRAPH_TOP
+    );
+
+    if (i > 0) {
+      display.drawLine(
+          previousX,
+          previousY,
+          x,
+          liveY,
+          SSD1306_WHITE
+      );
+    }
+
+    previousX = x;
+    previousY = liveY;
+
+    /*
+     * Peak hold is drawn as a dotted trace.
+     */
+    float peakValue = constrain(
+        peakTrace[i],
+        RSSI_BOTTOM,
+        RSSI_TOP
+    );
+
+    const int16_t peakY = map(
+        static_cast<long>(
+            peakValue * 10.0f
+        ),
+        static_cast<long>(
+            RSSI_BOTTOM * 10.0f
+        ),
+        static_cast<long>(
+            RSSI_TOP * 10.0f
+        ),
+        GRAPH_BOTTOM - 1,
+        GRAPH_TOP
+    );
+
+    if ((i % 3) == 0) {
+      display.drawPixel(
+          x,
+          peakY,
+          SSD1306_WHITE
+      );
+    }
+  }
+
+  display.setCursor(0, 50);
+
+  display.print("P:");
+  display.print(peakFrequency, 2);
+  display.print(" ");
+  display.print(peakRSSI, 0);
+  display.print("dBm");
+
+  display.setCursor(0, 58);
+  display.print("UP/DN PAN SEL CLR");
+
+  display.display();
+}
+
 }  // namespace ChickadeeDisplay

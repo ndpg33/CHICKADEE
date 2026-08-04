@@ -25,6 +25,16 @@ void showLiveRSSI(
     float rssi
 );
 
+void showSpectrum(
+    float startMHz,
+    float endMHz,
+    const float* liveTrace,
+    const float* peakTrace,
+    uint8_t pointCount,
+    float peakFrequency,
+    float peakRSSI
+);
+
 }  // namespace ChickadeeDisplay
 
 #endif

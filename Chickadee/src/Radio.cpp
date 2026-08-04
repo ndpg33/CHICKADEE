@@ -8,7 +8,23 @@
 
 namespace {
 
-constexpr float DEFAULT_FREQUENCY_MHZ = 433.92;
+constexpr float DEFAULT_FREQUENCY_MHZ =
+    433.92f;
+
+constexpr uint8_t CC1101_RSSI_REGISTER =
+    0x34;
+
+constexpr uint8_t CC1101_STATUS_READ =
+    0xC0;
+
+constexpr float RSSI_OFFSET_DB =
+    74.0f;
+
+SPISettings cc1101SPISettings(
+    4000000,
+    MSBFIRST,
+    SPI_MODE0
+);
 
 // Module(CS, GDO0, RESET, GDO2)
 CC1101 radio = new Module(
@@ -19,18 +35,103 @@ CC1101 radio = new Module(
 );
 
 bool radioReady = false;
-bool liveRSSIMode = false;
+bool directModeActive = false;
 
 int lastError = RADIOLIB_ERR_NONE;
 
 float currentFrequencyMHz =
     DEFAULT_FREQUENCY_MHZ;
 
+uint8_t readStatusRegister(
+    uint8_t address
+) {
+  SPI.beginTransaction(
+      cc1101SPISettings
+  );
+
+  digitalWrite(
+      Chickadee::CC1101_CS,
+      LOW
+  );
+
+  /*
+   * MISO goes LOW when the CC1101 crystal
+   * oscillator is ready for SPI access.
+   */
+  const uint32_t timeoutStart = micros();
+
+  while (
+      digitalRead(
+          Chickadee::CC1101_MISO
+      ) == HIGH
+  ) {
+    if (
+        micros() - timeoutStart
+        > 1000
+    ) {
+      break;
+    }
+  }
+
+  SPI.transfer(
+      address | CC1101_STATUS_READ
+  );
+
+  const uint8_t value =
+      SPI.transfer(0x00);
+
+  digitalWrite(
+      Chickadee::CC1101_CS,
+      HIGH
+  );
+
+  SPI.endTransaction();
+
+  return value;
+}
+
+float convertRawRSSI(uint8_t rawRSSI) {
+  int16_t signedRSSI;
+
+  if (rawRSSI >= 128) {
+    signedRSSI =
+        static_cast<int16_t>(rawRSSI)
+        - 256;
+  } else {
+    signedRSSI = rawRSSI;
+  }
+
+  return (
+      static_cast<float>(signedRSSI)
+      / 2.0f
+  ) - RSSI_OFFSET_DB;
+}
+
+bool enterDirectReceiveMode() {
+  lastError =
+      radio.receiveDirectAsync();
+
+  directModeActive =
+      lastError == RADIOLIB_ERR_NONE;
+
+  return directModeActive;
+}
+
 }  // namespace
 
 namespace ChickadeeRadio {
 
 bool begin() {
+  pinMode(
+      Chickadee::CC1101_CS,
+      OUTPUT
+  );
+
+  digitalWrite(
+      Chickadee::CC1101_CS,
+      HIGH
+  );
+
   SPI.begin(
       Chickadee::CC1101_SCK,
       Chickadee::CC1101_MISO,
@@ -40,11 +141,11 @@ bool begin() {
 
   lastError = radio.begin(
       DEFAULT_FREQUENCY_MHZ,
-      4.8,    // Bitrate in kbps
-      5.0,    // Frequency deviation in kHz
-      203.0,  // Receiver bandwidth in kHz
-      10,     // TX power in dBm
-      16      // Preamble length in bits
+      4.8,
+      5.0,
+      203.0,
+      10,
+      16
   );
 
   radioReady =
@@ -91,19 +192,14 @@ bool setFrequency(float frequencyMHz) {
 
   currentFrequencyMHz = frequencyMHz;
 
-  /*
-   * Retuning may disturb the current receive state,
-   * so restart the appropriate receive mode.
-   */
-  if (liveRSSIMode) {
-    lastError =
-        radio.receiveDirectAsync();
-  } else {
-    lastError =
-        radio.startReceive();
+  if (directModeActive) {
+    return enterDirectReceiveMode();
   }
 
-  return lastError == RADIOLIB_ERR_NONE;
+  lastError = radio.startReceive();
+
+  return lastError ==
+         RADIOLIB_ERR_NONE;
 }
 
 bool startLiveRSSI() {
@@ -111,13 +207,7 @@ bool startLiveRSSI() {
     return false;
   }
 
-  lastError =
-      radio.receiveDirectAsync();
-
-  liveRSSIMode =
-      lastError == RADIOLIB_ERR_NONE;
-
-  return liveRSSIMode;
+  return enterDirectReceiveMode();
 }
 
 void stopLiveRSSI() {
@@ -125,20 +215,70 @@ void stopLiveRSSI() {
     return;
   }
 
-  liveRSSIMode = false;
+  directModeActive = false;
 
   radio.standby();
 
-  lastError =
-      radio.startReceive();
+  lastError = radio.startReceive();
 }
 
 float readRSSI() {
-  if (!radioReady || !liveRSSIMode) {
+  if (
+      !radioReady ||
+      !directModeActive
+  ) {
     return -120.0f;
   }
 
-  return radio.getRSSI();
+  return convertRawRSSI(
+      readStatusRegister(
+          CC1101_RSSI_REGISTER
+      )
+  );
+}
+
+bool startSpectrumMode() {
+  if (!radioReady) {
+    return false;
+  }
+
+  return enterDirectReceiveMode();
+}
+
+bool tuneSpectrum(float frequencyMHz) {
+  if (!radioReady) {
+    return false;
+  }
+
+  lastError =
+      radio.setFrequency(frequencyMHz);
+
+  if (lastError != RADIOLIB_ERR_NONE) {
+    return false;
+  }
+
+  currentFrequencyMHz = frequencyMHz;
+
+  /*
+   * Re-enter direct receive mode after tuning.
+   */
+  return enterDirectReceiveMode();
+}
+
+float readSpectrumRSSI() {
+  if (
+      !radioReady ||
+      !directModeActive
+  ) {
+    return -120.0f;
+  }
+
+  const uint8_t rawRSSI =
+      readStatusRegister(
+          CC1101_RSSI_REGISTER
+      );
+
+  return convertRawRSSI(rawRSSI);
 }
 
 }  // namespace ChickadeeRadio

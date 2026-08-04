@@ -13,8 +13,11 @@ bool setFrequency(float frequencyMHz);
 
 bool startLiveRSSI();
 void stopLiveRSSI();
-
 float readRSSI();
+
+bool startSpectrumMode();
+bool tuneSpectrum(float frequencyMHz);
+float readSpectrumRSSI();
 
 }  // namespace ChickadeeRadio
 

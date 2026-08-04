@@ -4,11 +4,13 @@
 #include "Display.h"
 #include "Menu.h"
 #include "Radio.h"
+#include "SpectrumScanner.h"
 
 namespace {
 
 enum class AppScreen : uint8_t {
   MainMenu,
+  Spectrum,
   LiveRSSI,
   Placeholder
 };
@@ -55,8 +57,7 @@ Button backButton = {
     0
 };
 
-AppScreen currentScreen =
-    AppScreen::MainMenu;
+AppScreen currentScreen = AppScreen::MainMenu;
 
 bool oledReady = false;
 bool radioReady = false;
@@ -64,62 +65,40 @@ bool radioReady = false;
 unsigned long lastRSSIUpdate = 0;
 
 bool buttonPressed(Button& button) {
-  const bool currentReading =
-      digitalRead(button.pin);
+  const bool currentReading = digitalRead(button.pin);
 
-  if (
-      currentReading
-      != button.previousReading
-  ) {
+  if (currentReading != button.previousReading) {
     button.lastChangeTime = millis();
-    button.previousReading =
-        currentReading;
+    button.previousReading = currentReading;
   }
 
-  if (
-      millis() - button.lastChangeTime
-      < DEBOUNCE_MS
-  ) {
+  if (millis() - button.lastChangeTime < DEBOUNCE_MS) {
     return false;
   }
 
-  if (
-      currentReading
-      == button.stableState
-  ) {
+  if (currentReading == button.stableState) {
     return false;
   }
 
-  button.stableState =
-      currentReading;
+  button.stableState = currentReading;
 
   return button.stableState == LOW;
 }
 
 void initializeButton(Button& button) {
-  pinMode(
-      button.pin,
-      INPUT_PULLUP
-  );
+  pinMode(button.pin, INPUT_PULLUP);
 
-  const bool initialState =
-      digitalRead(button.pin);
+  const bool initialState = digitalRead(button.pin);
 
-  button.stableState =
-      initialState;
-
-  button.previousReading =
-      initialState;
-
-  button.lastChangeTime =
-      millis();
+  button.stableState = initialState;
+  button.previousReading = initialState;
+  button.lastChangeTime = millis();
 }
 
 void drawMainMenu() {
   ChickadeeRadio::stopLiveRSSI();
 
-  currentScreen =
-      AppScreen::MainMenu;
+  currentScreen = AppScreen::MainMenu;
 
   ChickadeeDisplay::showMainMenu(
       ChickadeeMenu::getSelectedIndex()
@@ -127,8 +106,7 @@ void drawMainMenu() {
 }
 
 void drawLiveRSSI() {
-  const float rssi =
-      ChickadeeRadio::readRSSI();
+  const float rssi = ChickadeeRadio::readRSSI();
 
   ChickadeeDisplay::showLiveRSSI(
       ChickadeeRadio::getFrequency(),
@@ -145,14 +123,44 @@ void drawLiveRSSI() {
   Serial.println(" dBm");
 }
 
-void openLiveRSSI() {
-  Serial.println(
-      "Opening Live RSSI."
+void drawSpectrum() {
+  ChickadeeDisplay::showSpectrum(
+      ChickadeeSpectrum::getStartFrequency(),
+      ChickadeeSpectrum::getEndFrequency(),
+      ChickadeeSpectrum::getLiveTrace(),
+      ChickadeeSpectrum::getPeakTrace(),
+      ChickadeeSpectrum::POINT_COUNT,
+      ChickadeeSpectrum::getPeakFrequency(),
+      ChickadeeSpectrum::getPeakRSSI()
   );
+}
+
+void openSpectrum() {
+  Serial.println("Opening Spectrum Scan.");
+
+  if (
+      !radioReady ||
+      !ChickadeeSpectrum::begin(430.0f)
+  ) {
+    currentScreen = AppScreen::Placeholder;
+
+    ChickadeeDisplay::showComingSoon(
+        "SCAN ERROR"
+    );
+
+    return;
+  }
+
+  currentScreen = AppScreen::Spectrum;
+
+  drawSpectrum();
+}
+
+void openLiveRSSI() {
+  Serial.println("Opening Live RSSI.");
 
   if (!radioReady) {
-    currentScreen =
-        AppScreen::Placeholder;
+    currentScreen = AppScreen::Placeholder;
 
     ChickadeeDisplay::showComingSoon(
         "RADIO ERROR"
@@ -170,8 +178,7 @@ void openLiveRSSI() {
         ChickadeeRadio::getLastError()
     );
 
-    currentScreen =
-        AppScreen::Placeholder;
+    currentScreen = AppScreen::Placeholder;
 
     ChickadeeDisplay::showComingSoon(
         "RSSI ERROR"
@@ -180,10 +187,10 @@ void openLiveRSSI() {
     return;
   }
 
-  currentScreen =
-      AppScreen::LiveRSSI;
+  currentScreen = AppScreen::LiveRSSI;
 
   lastRSSIUpdate = 0;
+
   drawLiveRSSI();
 }
 
@@ -192,15 +199,22 @@ void openSelectedFeature() {
       ChickadeeMenu::getSelectedItem();
 
   if (
-      selected
-      == ChickadeeMenu::Item::LiveRSSI
+      selected ==
+      ChickadeeMenu::Item::SpectrumScan
+  ) {
+    openSpectrum();
+    return;
+  }
+
+  if (
+      selected ==
+      ChickadeeMenu::Item::LiveRSSI
   ) {
     openLiveRSSI();
     return;
   }
 
-  currentScreen =
-      AppScreen::Placeholder;
+  currentScreen = AppScreen::Placeholder;
 
   ChickadeeDisplay::showComingSoon(
       ChickadeeMenu::getItemLabel(
@@ -233,35 +247,107 @@ void handleMainMenu() {
   buttonPressed(backButton);
 }
 
+void handleSpectrum() {
+  ChickadeeSpectrum::update();
+
+  if (buttonPressed(upButton)) {
+    ChickadeeSpectrum::panUp();
+    drawSpectrum();
+  }
+
+  if (buttonPressed(downButton)) {
+    ChickadeeSpectrum::panDown();
+    drawSpectrum();
+  }
+
+  if (buttonPressed(selectButton)) {
+    ChickadeeSpectrum::clearPeaks();
+    drawSpectrum();
+
+    Serial.println(
+        "Spectrum peak hold cleared."
+    );
+  }
+
+  if (buttonPressed(backButton)) {
+    Serial.println(
+        "Leaving Spectrum Scan."
+    );
+
+    drawMainMenu();
+    return;
+  }
+
+  if (ChickadeeSpectrum::hasNewSweep()) {
+    drawSpectrum();
+
+    Serial.print("Scan ");
+    Serial.print(
+        ChickadeeSpectrum::getStartFrequency(),
+        1
+    );
+
+    Serial.print("-");
+    Serial.print(
+        ChickadeeSpectrum::getEndFrequency(),
+        1
+    );
+
+    Serial.print(" MHz, peak ");
+    Serial.print(
+        ChickadeeSpectrum::getPeakFrequency(),
+        3
+    );
+
+    Serial.print(" MHz at ");
+    Serial.print(
+        ChickadeeSpectrum::getPeakRSSI(),
+        1
+    );
+
+    Serial.println(" dBm");
+  }
+}
+
 void handleLiveRSSI() {
   if (buttonPressed(upButton)) {
     float frequency =
-        ChickadeeRadio::getFrequency()
-        + FREQUENCY_STEP_MHZ;
+        ChickadeeRadio::getFrequency() +
+        FREQUENCY_STEP_MHZ;
 
     if (frequency > MAX_FREQUENCY_MHZ) {
       frequency = MIN_FREQUENCY_MHZ;
     }
 
-    ChickadeeRadio::setFrequency(
-        frequency
-    );
+    if (!ChickadeeRadio::setFrequency(frequency)) {
+      Serial.print(
+          "Frequency increase failed. Error: "
+      );
+      Serial.println(
+          ChickadeeRadio::getLastError()
+      );
+    }
 
     drawLiveRSSI();
   }
 
   if (buttonPressed(downButton)) {
     float frequency =
-        ChickadeeRadio::getFrequency()
-        - FREQUENCY_STEP_MHZ;
+        ChickadeeRadio::getFrequency() -
+        FREQUENCY_STEP_MHZ;
 
     if (frequency < MIN_FREQUENCY_MHZ) {
       frequency = MAX_FREQUENCY_MHZ;
     }
 
-    ChickadeeRadio::setFrequency(
-        frequency
-    );
+    if (!ChickadeeRadio::setFrequency(frequency)) {
+      Serial.print(
+          "Frequency decrease failed. Error: "
+      );
+      Serial.println(
+          ChickadeeRadio::getLastError()
+      );
+    }
 
     drawLiveRSSI();
   }
@@ -314,8 +400,7 @@ void setup() {
   Serial.println(Chickadee::VERSION);
   Serial.println("============================");
 
-  oledReady =
-      ChickadeeDisplay::begin();
+  oledReady = ChickadeeDisplay::begin();
 
   if (oledReady) {
     Serial.println(
@@ -335,13 +420,19 @@ void setup() {
       "Initializing CC1101..."
   );
 
-  radioReady =
-      ChickadeeRadio::begin();
+  radioReady = ChickadeeRadio::begin();
 
   if (radioReady) {
     Serial.println(
         "CC1101 initialization successful."
     );
+
+    Serial.print("Listening at ");
+    Serial.print(
+        ChickadeeRadio::getFrequency(),
+        3
+    );
+    Serial.println(" MHz");
   } else {
     Serial.print(
         "CC1101 initialization FAILED: "
@@ -361,6 +452,7 @@ void setup() {
     delay(1500);
 
     ChickadeeMenu::begin();
+
     drawMainMenu();
   }
 
@@ -376,6 +468,10 @@ void loop() {
   switch (currentScreen) {
     case AppScreen::MainMenu:
       handleMainMenu();
+      break;
+
+    case AppScreen::Spectrum:
+      handleSpectrum();
       break;
 
     case AppScreen::LiveRSSI:
