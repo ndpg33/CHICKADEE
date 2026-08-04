@@ -1,0 +1,29 @@
+# Arduino build files
+build/
+*.hex
+*.elf
+*.bin
+*.map
+
+# Arduino IDE
+*.ino.globals.h
+*.ino.cpp
+*.ino.with_bootloader.*
+
+# VS Code
+.vscode/
+
+# PlatformIO
+.pio/
+.pioenvs/
+.piolibdeps/
+
+# Operating system files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Temporary files
+*.tmp
+*.bak
+*.log
