@@ -27,6 +27,17 @@ const float* getPeakTrace();
 
 bool hasNewSweep();
 
+// Auto Seek
+void startSeek();
+void stopSeekAndCenter();
+void cancelSeek();
+
+bool isSeeking();
+
+float getSeekFrequency();
+float getSeekRSSI();
+float getSeekProgress();
+
 }  // namespace ChickadeeSpectrum
 
 #endif

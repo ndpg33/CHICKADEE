@@ -14,7 +14,9 @@ void showHardwareStatus(
     bool radioReady
 );
 
-void showMainMenu(uint8_t selectedIndex);
+void showMainMenu(
+    uint8_t selectedIndex
+);
 
 void showComingSoon(
     const char* title
@@ -33,6 +35,12 @@ void showSpectrum(
     uint8_t pointCount,
     float peakFrequency,
     float peakRSSI
+);
+
+void showSpectrumSeek(
+    float currentPeakMHz,
+    float currentPeakRSSI,
+    float progress
 );
 
 }  // namespace ChickadeeDisplay
