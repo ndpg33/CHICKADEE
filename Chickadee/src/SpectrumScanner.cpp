@@ -174,6 +174,51 @@ void setWindowStart(float frequencyMHz) {
   resetPeakTrace();
 }
 
+void placeSeekResultOnGraph(
+    float frequencyMHz,
+    float rssi
+) {
+  strongestFrequencyMHz =
+      frequencyMHz;
+
+  strongestRSSI =
+      rssi;
+
+  const float position =
+      (
+          frequencyMHz -
+          startFrequencyMHz
+      ) / WINDOW_WIDTH_MHZ;
+
+  int peakIndex =
+      static_cast<int>(
+          roundf(
+              position *
+              (
+                  ChickadeeSpectrum::
+                      POINT_COUNT - 1
+              )
+          )
+      );
+
+  peakIndex = constrain(
+      peakIndex,
+      0,
+      ChickadeeSpectrum::
+          POINT_COUNT - 1
+  );
+
+  /*
+   * Put the detected measurement into both
+   * traces so it appears immediately.
+   */
+  liveTrace[peakIndex] =
+      rssi;
+
+  peakTrace[peakIndex] =
+      rssi;
+}
+
 void centerWindowOn(float frequencyMHz) {
   setWindowStart(
       frequencyMHz -
@@ -531,17 +576,39 @@ void stopSeekAndCenter() {
     return;
   }
 
-  ChickadeeRadio::setSpectrumBandwidth(
-      WINDOW_BANDWIDTH_KHZ
-  );
+  const float detectedFrequency =
+      seekBestFrequencyMHz;
+
+  const float detectedRSSI =
+      seekBestRSSI;
+
+  ChickadeeRadio::
+      setSpectrumBandwidth(
+          WINDOW_BANDWIDTH_KHZ
+      );
 
   if (
-      seekBestRSSI >=
+      detectedRSSI >=
       SEEK_THRESHOLD_DBM
   ) {
+    /*
+     * This resets the normal graph, so preserve
+     * the result above before calling it.
+     */
     centerWindowOn(
-        seekBestFrequencyMHz
+        detectedFrequency
     );
+
+    /*
+     * Restore the detected result onto the
+     * newly centered graph.
+     */
+    placeSeekResultOnGraph(
+        detectedFrequency,
+        detectedRSSI
+    );
+
+    newSweepAvailable = true;
   } else {
     scannerMode =
         ScannerMode::WindowScan;
