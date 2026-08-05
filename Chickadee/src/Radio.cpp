@@ -8,17 +8,13 @@
 
 namespace {
 
-constexpr float DEFAULT_FREQUENCY_MHZ =
-    433.92f;
+constexpr float DEFAULT_FREQUENCY_MHZ = 433.92f;
+constexpr float DEFAULT_RX_BANDWIDTH_KHZ = 203.0f;
 
-constexpr uint8_t CC1101_RSSI_REGISTER =
-    0x34;
+constexpr uint8_t CC1101_RSSI_REGISTER = 0x34;
+constexpr uint8_t CC1101_STATUS_READ = 0xC0;
 
-constexpr uint8_t CC1101_STATUS_READ =
-    0xC0;
-
-constexpr float RSSI_OFFSET_DB =
-    74.0f;
+constexpr float RSSI_OFFSET_DB = 74.0f;
 
 SPISettings cc1101SPISettings(
     4000000,
@@ -42,22 +38,14 @@ int lastError = RADIOLIB_ERR_NONE;
 float currentFrequencyMHz =
     DEFAULT_FREQUENCY_MHZ;
 
-uint8_t readStatusRegister(
-    uint8_t address
-) {
-  SPI.beginTransaction(
-      cc1101SPISettings
-  );
+uint8_t readStatusRegister(uint8_t address) {
+  SPI.beginTransaction(cc1101SPISettings);
 
   digitalWrite(
       Chickadee::CC1101_CS,
       LOW
   );
 
-  /*
-   * MISO goes LOW when the CC1101 crystal
-   * oscillator is ready for SPI access.
-   */
   const uint32_t timeoutStart = micros();
 
   while (
@@ -66,8 +54,8 @@ uint8_t readStatusRegister(
       ) == HIGH
   ) {
     if (
-        micros() - timeoutStart
-        > 1000
+        micros() - timeoutStart >
+        1000
     ) {
       break;
     }
@@ -95,15 +83,15 @@ float convertRawRSSI(uint8_t rawRSSI) {
 
   if (rawRSSI >= 128) {
     signedRSSI =
-        static_cast<int16_t>(rawRSSI)
-        - 256;
+        static_cast<int16_t>(rawRSSI) -
+        256;
   } else {
     signedRSSI = rawRSSI;
   }
 
   return (
-      static_cast<float>(signedRSSI)
-      / 2.0f
+      static_cast<float>(signedRSSI) /
+      2.0f
   ) - RSSI_OFFSET_DB;
 }
 
@@ -143,7 +131,7 @@ bool begin() {
       DEFAULT_FREQUENCY_MHZ,
       4.8,
       5.0,
-      203.0,
+      DEFAULT_RX_BANDWIDTH_KHZ,
       10,
       16
   );
@@ -158,7 +146,8 @@ bool begin() {
   currentFrequencyMHz =
       DEFAULT_FREQUENCY_MHZ;
 
-  lastError = radio.startReceive();
+  lastError =
+      radio.startReceive();
 
   radioReady =
       lastError == RADIOLIB_ERR_NONE;
@@ -186,17 +175,22 @@ bool setFrequency(float frequencyMHz) {
   lastError =
       radio.setFrequency(frequencyMHz);
 
-  if (lastError != RADIOLIB_ERR_NONE) {
+  if (
+      lastError !=
+      RADIOLIB_ERR_NONE
+  ) {
     return false;
   }
 
-  currentFrequencyMHz = frequencyMHz;
+  currentFrequencyMHz =
+      frequencyMHz;
 
   if (directModeActive) {
     return enterDirectReceiveMode();
   }
 
-  lastError = radio.startReceive();
+  lastError =
+      radio.startReceive();
 
   return lastError ==
          RADIOLIB_ERR_NONE;
@@ -219,7 +213,18 @@ void stopLiveRSSI() {
 
   radio.standby();
 
-  lastError = radio.startReceive();
+  lastError =
+      radio.setRxBandwidth(
+          DEFAULT_RX_BANDWIDTH_KHZ
+      );
+
+  if (
+      lastError ==
+      RADIOLIB_ERR_NONE
+  ) {
+    lastError =
+        radio.startReceive();
+  }
 }
 
 float readRSSI() {
@@ -251,17 +256,20 @@ bool tuneSpectrum(float frequencyMHz) {
   }
 
   lastError =
-      radio.setFrequency(frequencyMHz);
+      radio.setFrequency(
+          frequencyMHz
+      );
 
-  if (lastError != RADIOLIB_ERR_NONE) {
+  if (
+      lastError !=
+      RADIOLIB_ERR_NONE
+  ) {
     return false;
   }
 
-  currentFrequencyMHz = frequencyMHz;
+  currentFrequencyMHz =
+      frequencyMHz;
 
-  /*
-   * Re-enter direct receive mode after tuning.
-   */
   return enterDirectReceiveMode();
 }
 
@@ -273,12 +281,35 @@ float readSpectrumRSSI() {
     return -120.0f;
   }
 
-  const uint8_t rawRSSI =
+  return convertRawRSSI(
       readStatusRegister(
           CC1101_RSSI_REGISTER
+      )
+  );
+}
+
+bool setSpectrumBandwidth(
+    float bandwidthKHz
+) {
+  if (!radioReady) {
+    return false;
+  }
+
+  radio.standby();
+
+  lastError =
+      radio.setRxBandwidth(
+          bandwidthKHz
       );
 
-  return convertRawRSSI(rawRSSI);
+  if (
+      lastError !=
+      RADIOLIB_ERR_NONE
+  ) {
+    return false;
+  }
+
+  return enterDirectReceiveMode();
 }
 
 }  // namespace ChickadeeRadio

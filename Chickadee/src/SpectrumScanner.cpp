@@ -12,23 +12,35 @@ constexpr float PAN_STEP_MHZ = 1.0f;
 constexpr float BAND_MIN_MHZ = 387.0f;
 constexpr float BAND_MAX_MHZ = 464.0f;
 
-constexpr float MIN_START_MHZ = BAND_MIN_MHZ;
+constexpr float MIN_START_MHZ =
+    BAND_MIN_MHZ;
+
 constexpr float MAX_START_MHZ =
-    BAND_MAX_MHZ - WINDOW_WIDTH_MHZ;
+    BAND_MAX_MHZ -
+    WINDOW_WIDTH_MHZ;
 
-// Normal spectrum scan timing
-constexpr uint32_t SETTLE_TIME_US = 2200;
+// Normal graph scan
+constexpr uint32_t WINDOW_SETTLE_US = 2200;
+constexpr float WINDOW_BANDWIDTH_KHZ = 203.0f;
 
-// Auto Seek uses coarser steps for speed
-constexpr float SEEK_STEP_MHZ = 0.10f;
-constexpr uint32_t SEEK_SETTLE_US = 1700;
+// Fast coarse seek
+constexpr float COARSE_STEP_MHZ = 0.40f;
+constexpr uint32_t COARSE_SETTLE_US = 850;
+constexpr float COARSE_BANDWIDTH_KHZ = 650.0f;
 
-// Ignore weak ambient noise as a seek result
-constexpr float SEEK_THRESHOLD_DBM = -90.0f;
+// Fine scan around a coarse candidate
+constexpr float REFINE_RADIUS_MHZ = 1.0f;
+constexpr float REFINE_STEP_MHZ = 0.05f;
+constexpr uint32_t REFINE_SETTLE_US = 1600;
+constexpr float REFINE_BANDWIDTH_KHZ = 203.0f;
+
+// Nearby fobs should normally exceed this significantly.
+constexpr float SEEK_THRESHOLD_DBM = -82.0f;
 
 enum class ScannerMode : uint8_t {
   WindowScan,
-  Seek
+  SeekCoarse,
+  SeekRefine
 };
 
 ScannerMode scannerMode =
@@ -54,73 +66,65 @@ bool newSweepAvailable = false;
 
 uint32_t tuneStartedAt = 0;
 
-// Seek state
-float seekCurrentFrequencyMHz = BAND_MIN_MHZ;
-float seekStrongestFrequencyMHz = BAND_MIN_MHZ;
-float seekStrongestRSSI = -120.0f;
+// Auto Seek state
+float seekCurrentFrequencyMHz =
+    BAND_MIN_MHZ;
+
+float seekBestFrequencyMHz =
+    BAND_MIN_MHZ;
+
+float seekBestRSSI =
+    -120.0f;
+
+float coarseCandidateFrequencyMHz =
+    BAND_MIN_MHZ;
+
+float refineStartMHz =
+    BAND_MIN_MHZ;
+
+float refineEndMHz =
+    BAND_MIN_MHZ;
 
 float frequencyForPoint(uint8_t index) {
   const float fraction =
       static_cast<float>(index) /
       static_cast<float>(
-          ChickadeeSpectrum::POINT_COUNT - 1
+          ChickadeeSpectrum::POINT_COUNT -
+          1
       );
 
   return startFrequencyMHz +
-         fraction * WINDOW_WIDTH_MHZ;
+         fraction *
+         WINDOW_WIDTH_MHZ;
 }
 
-float medianOfThree(
-    float first,
-    float second,
-    float third
-) {
-  if (first > second) {
-    const float temporary = first;
-    first = second;
-    second = temporary;
+/*
+ * Use the strongest sample so a brief RF burst
+ * is not discarded by a median or average.
+ */
+float readTransientRSSI() {
+  float strongest = -120.0f;
+
+  for (uint8_t sample = 0; sample < 3; sample++) {
+    const float reading =
+        ChickadeeRadio::
+            readSpectrumRSSI();
+
+    if (reading > strongest) {
+      strongest = reading;
+    }
+
+    delayMicroseconds(80);
   }
 
-  if (second > third) {
-    const float temporary = second;
-    second = third;
-    third = temporary;
-  }
-
-  if (first > second) {
-    const float temporary = first;
-    first = second;
-    second = temporary;
-  }
-
-  return second;
-}
-
-float readFilteredRSSI() {
-  const float first =
-      ChickadeeRadio::readSpectrumRSSI();
-
-  delayMicroseconds(120);
-
-  const float second =
-      ChickadeeRadio::readSpectrumRSSI();
-
-  delayMicroseconds(120);
-
-  const float third =
-      ChickadeeRadio::readSpectrumRSSI();
-
-  return medianOfThree(
-      first,
-      second,
-      third
-  );
+  return strongest;
 }
 
 void resetLiveTrace() {
   for (
       uint8_t index = 0;
-      index < ChickadeeSpectrum::POINT_COUNT;
+      index <
+          ChickadeeSpectrum::POINT_COUNT;
       index++
   ) {
     liveTrace[index] = -120.0f;
@@ -130,7 +134,8 @@ void resetLiveTrace() {
 void resetPeakTrace() {
   for (
       uint8_t index = 0;
-      index < ChickadeeSpectrum::POINT_COUNT;
+      index <
+          ChickadeeSpectrum::POINT_COUNT;
       index++
   ) {
     peakTrace[index] = -120.0f;
@@ -144,6 +149,7 @@ void resetPeakTrace() {
 
 void restartWindowSweep() {
   currentPoint = 0;
+
   waitingForMeasurement = false;
   newSweepAvailable = false;
 
@@ -160,6 +166,10 @@ void setWindowStart(float frequencyMHz) {
   scannerMode =
       ScannerMode::WindowScan;
 
+  ChickadeeRadio::setSpectrumBandwidth(
+      WINDOW_BANDWIDTH_KHZ
+  );
+
   restartWindowSweep();
   resetPeakTrace();
 }
@@ -167,14 +177,47 @@ void setWindowStart(float frequencyMHz) {
 void centerWindowOn(float frequencyMHz) {
   setWindowStart(
       frequencyMHz -
-      (WINDOW_WIDTH_MHZ / 2.0f)
+      WINDOW_WIDTH_MHZ / 2.0f
+  );
+}
+
+void beginRefine(float candidateMHz) {
+  coarseCandidateFrequencyMHz =
+      candidateMHz;
+
+  refineStartMHz = constrain(
+      candidateMHz -
+          REFINE_RADIUS_MHZ,
+      BAND_MIN_MHZ,
+      BAND_MAX_MHZ
+  );
+
+  refineEndMHz = constrain(
+      candidateMHz +
+          REFINE_RADIUS_MHZ,
+      BAND_MIN_MHZ,
+      BAND_MAX_MHZ
+  );
+
+  seekCurrentFrequencyMHz =
+      refineStartMHz;
+
+  scannerMode =
+      ScannerMode::SeekRefine;
+
+  waitingForMeasurement = false;
+
+  ChickadeeRadio::setSpectrumBandwidth(
+      REFINE_BANDWIDTH_KHZ
   );
 }
 
 void updateWindowScan() {
   if (!waitingForMeasurement) {
     const float frequency =
-        frequencyForPoint(currentPoint);
+        frequencyForPoint(
+            currentPoint
+        );
 
     if (
         ChickadeeRadio::tuneSpectrum(
@@ -189,30 +232,40 @@ void updateWindowScan() {
   }
 
   if (
-      micros() - tuneStartedAt
-      < SETTLE_TIME_US
+      micros() - tuneStartedAt <
+      WINDOW_SETTLE_US
   ) {
     return;
   }
 
   const float frequency =
-      frequencyForPoint(currentPoint);
+      frequencyForPoint(
+          currentPoint
+      );
 
   const float rssi =
-      readFilteredRSSI();
+      readTransientRSSI();
 
-  liveTrace[currentPoint] = rssi;
+  liveTrace[currentPoint] =
+      rssi;
 
-  if (rssi > peakTrace[currentPoint]) {
-    peakTrace[currentPoint] = rssi;
+  if (
+      rssi >
+      peakTrace[currentPoint]
+  ) {
+    peakTrace[currentPoint] =
+        rssi;
   }
 
   if (rssi > strongestRSSI) {
     strongestRSSI = rssi;
-    strongestFrequencyMHz = frequency;
+
+    strongestFrequencyMHz =
+        frequency;
   }
 
   waitingForMeasurement = false;
+
   currentPoint++;
 
   if (
@@ -224,7 +277,7 @@ void updateWindowScan() {
   }
 }
 
-void updateSeek() {
+void updateCoarseSeek() {
   if (!waitingForMeasurement) {
     if (
         ChickadeeRadio::tuneSpectrum(
@@ -239,27 +292,36 @@ void updateSeek() {
   }
 
   if (
-      micros() - tuneStartedAt
-      < SEEK_SETTLE_US
+      micros() - tuneStartedAt <
+      COARSE_SETTLE_US
   ) {
     return;
   }
 
   const float rssi =
-      readFilteredRSSI();
+      readTransientRSSI();
 
-  if (
-      rssi >= SEEK_THRESHOLD_DBM &&
-      rssi > seekStrongestRSSI
-  ) {
-    seekStrongestRSSI = rssi;
+  if (rssi > seekBestRSSI) {
+    seekBestRSSI = rssi;
 
-    seekStrongestFrequencyMHz =
+    seekBestFrequencyMHz =
         seekCurrentFrequencyMHz;
   }
 
+  /*
+   * A strong candidate immediately starts
+   * a narrow refinement scan.
+   */
+  if (rssi >= SEEK_THRESHOLD_DBM) {
+    beginRefine(
+        seekCurrentFrequencyMHz
+    );
+
+    return;
+  }
+
   seekCurrentFrequencyMHz +=
-      SEEK_STEP_MHZ;
+      COARSE_STEP_MHZ;
 
   if (
       seekCurrentFrequencyMHz >
@@ -267,6 +329,56 @@ void updateSeek() {
   ) {
     seekCurrentFrequencyMHz =
         BAND_MIN_MHZ;
+  }
+
+  waitingForMeasurement = false;
+}
+
+void updateRefineSeek() {
+  if (!waitingForMeasurement) {
+    if (
+        ChickadeeRadio::tuneSpectrum(
+            seekCurrentFrequencyMHz
+        )
+    ) {
+      tuneStartedAt = micros();
+      waitingForMeasurement = true;
+    }
+
+    return;
+  }
+
+  if (
+      micros() - tuneStartedAt <
+      REFINE_SETTLE_US
+  ) {
+    return;
+  }
+
+  const float rssi =
+      readTransientRSSI();
+
+  if (rssi > seekBestRSSI) {
+    seekBestRSSI = rssi;
+
+    seekBestFrequencyMHz =
+        seekCurrentFrequencyMHz;
+  }
+
+  seekCurrentFrequencyMHz +=
+      REFINE_STEP_MHZ;
+
+  /*
+   * Keep repeating the refined region while
+   * Select remains held. This allows repeated
+   * key-fob transmissions to improve the result.
+   */
+  if (
+      seekCurrentFrequencyMHz >
+      refineEndMHz
+  ) {
+    seekCurrentFrequencyMHz =
+        refineStartMHz;
   }
 
   waitingForMeasurement = false;
@@ -297,6 +409,15 @@ bool begin(float startMHz) {
   waitingForMeasurement = false;
   newSweepAvailable = false;
 
+  if (
+      !ChickadeeRadio::
+          setSpectrumBandwidth(
+              WINDOW_BANDWIDTH_KHZ
+          )
+  ) {
+    return false;
+  }
+
   return ChickadeeRadio::
       startSpectrumMode();
 }
@@ -306,13 +427,18 @@ void update() {
     return;
   }
 
-  if (
-      scannerMode ==
-      ScannerMode::Seek
-  ) {
-    updateSeek();
-  } else {
-    updateWindowScan();
+  switch (scannerMode) {
+    case ScannerMode::WindowScan:
+      updateWindowScan();
+      break;
+
+    case ScannerMode::SeekCoarse:
+      updateCoarseSeek();
+      break;
+
+    case ScannerMode::SeekRefine:
+      updateRefineSeek();
+      break;
   }
 }
 
@@ -378,35 +504,43 @@ bool hasNewSweep() {
 
 void startSeek() {
   scannerMode =
-      ScannerMode::Seek;
+      ScannerMode::SeekCoarse;
 
   seekCurrentFrequencyMHz =
       BAND_MIN_MHZ;
 
-  seekStrongestFrequencyMHz =
+  seekBestFrequencyMHz =
       BAND_MIN_MHZ;
 
-  seekStrongestRSSI =
+  seekBestRSSI =
       -120.0f;
+
+  coarseCandidateFrequencyMHz =
+      BAND_MIN_MHZ;
 
   waitingForMeasurement = false;
   newSweepAvailable = false;
+
+  ChickadeeRadio::setSpectrumBandwidth(
+      COARSE_BANDWIDTH_KHZ
+  );
 }
 
 void stopSeekAndCenter() {
-  if (
-      scannerMode !=
-      ScannerMode::Seek
-  ) {
+  if (!isSeeking()) {
     return;
   }
 
+  ChickadeeRadio::setSpectrumBandwidth(
+      WINDOW_BANDWIDTH_KHZ
+  );
+
   if (
-      seekStrongestRSSI >=
+      seekBestRSSI >=
       SEEK_THRESHOLD_DBM
   ) {
     centerWindowOn(
-        seekStrongestFrequencyMHz
+        seekBestFrequencyMHz
     );
   } else {
     scannerMode =
@@ -417,6 +551,10 @@ void stopSeekAndCenter() {
 }
 
 void cancelSeek() {
+  ChickadeeRadio::setSpectrumBandwidth(
+      WINDOW_BANDWIDTH_KHZ
+  );
+
   scannerMode =
       ScannerMode::WindowScan;
 
@@ -424,19 +562,44 @@ void cancelSeek() {
 }
 
 bool isSeeking() {
-  return scannerMode ==
-         ScannerMode::Seek;
+  return
+      scannerMode ==
+          ScannerMode::SeekCoarse ||
+      scannerMode ==
+          ScannerMode::SeekRefine;
 }
 
 float getSeekFrequency() {
-  return seekStrongestFrequencyMHz;
+  return seekBestFrequencyMHz;
 }
 
 float getSeekRSSI() {
-  return seekStrongestRSSI;
+  return seekBestRSSI;
 }
 
 float getSeekProgress() {
+  if (
+      scannerMode ==
+      ScannerMode::SeekRefine
+  ) {
+    const float width =
+        refineEndMHz -
+        refineStartMHz;
+
+    if (width <= 0.0f) {
+      return 1.0f;
+    }
+
+    return constrain(
+        (
+            seekCurrentFrequencyMHz -
+            refineStartMHz
+        ) / width,
+        0.0f,
+        1.0f
+    );
+  }
+
   return constrain(
       (
           seekCurrentFrequencyMHz -

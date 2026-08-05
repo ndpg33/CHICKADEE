@@ -19,6 +19,8 @@ bool startSpectrumMode();
 bool tuneSpectrum(float frequencyMHz);
 float readSpectrumRSSI();
 
+bool setSpectrumBandwidth(float bandwidthKHz);
+
 }  // namespace ChickadeeRadio
 
 #endif

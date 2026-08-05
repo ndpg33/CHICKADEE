@@ -27,7 +27,6 @@ const float* getPeakTrace();
 
 bool hasNewSweep();
 
-// Auto Seek
 void startSeek();
 void stopSeekAndCenter();
 void cancelSeek();
